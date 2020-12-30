@@ -30,8 +30,8 @@ class PlatesDataset(Dataset):
         
         if self.transform:
             image = self.transform(image=image)["image"]
-        
-        return image, classes_vocab[cls]
+
+        return image, classes_vocab[cls], img_path
 
 def get_dataset(images: List[List], transformers=None) -> DatasetFolder:
     return PlatesDataset(images, transform=transformers)

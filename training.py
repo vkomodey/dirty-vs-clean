@@ -32,12 +32,12 @@ layers_to_substitude = {
 }
 
 train_transforms = A.Compose([
-    A.RandomResizedCrop(224, 224),
+    A.CenterCrop(height=224, width=224, p=1),
     A.RandomRotate90(),
-    A.RandomBrightness(),
-    A.Normalize(**resize_dict),
+    A.RandomContrast(limit=(0.38, 1.00), p=0.5),
+    A.Normalize(**resize_dict, p=1),
     ToTensorV2()
-])
+], p=1)
 
 val_test_transforms = A.Compose([
     A.Resize(224, 224),
@@ -45,7 +45,7 @@ val_test_transforms = A.Compose([
     ToTensorV2()
 ])
 
-def prepare_model(params) -> torch.nn.Module:
+def prepare_model(params, device) -> torch.nn.Module:
     model = model_list[params["model"]]
 
     # freeze all layers for fine-tuning
@@ -57,6 +57,8 @@ def prepare_model(params) -> torch.nn.Module:
     layer_to_substitude = getattr(model, layer)
     setattr(model, layer, torch.nn.Linear(layer_to_substitude.in_features, 2))
 
+    model = model.to(device)
+
     return model
 
 def train(train_dataloader: torch.utils.data.DataLoader,
@@ -66,13 +68,13 @@ def train(train_dataloader: torch.utils.data.DataLoader,
     device = torch.device(params["device"])
     criterion = torch.nn.CrossEntropyLoss()
     
-    train_monitor = MetricsMonitor('train')
-    validation_monitor = MetricsMonitor('validation')
+    train_monitor = MetricsMonitor()
+    validation_monitor = MetricsMonitor()
 
-    model = prepare_model(params)
-    model = model.to(device)
+    model = prepare_model(params, device)
     
     optimizer = torch.optim.Adam(model.parameters(), lr=params["lr"])
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=7)
     
     for epoch in tqdm(range(params["epochs"]), desc=f'Fold #{fold_num}'):
         for phase in list(TrainPhase):
@@ -89,13 +91,19 @@ def train(train_dataloader: torch.utils.data.DataLoader,
                 with torch.set_grad_enabled(phase == TrainPhase.train):
                     optimizer.zero_grad()
 
-                    inputs, labels = batch
+                    inputs, labels, img_paths = batch
                     inputs = inputs.to(device)
                     # cross entropy requires that labels should be of type of tensor.Long
                     labels = labels.long().to(device)
 
                     outputs = model(inputs)
                     _, predictions = torch.max(outputs, 1)
+
+                    if phase == TrainPhase.validation:
+                        # valid only for leavy one out cross validation
+                        if len(inputs) == 1:
+                            monitor.add_prediction(img_paths[0], predictions[0].item(), labels[0].item())
+
                     loss = criterion(outputs, labels)
                     accuracy = (labels == predictions).float().mean()
                     monitor.add_loss(loss.item())
@@ -104,6 +112,7 @@ def train(train_dataloader: torch.utils.data.DataLoader,
                     if phase == TrainPhase.train:
                         loss.backward()
                         optimizer.step()
+                        scheduler.step()
             
             monitor.loss_reduction()
             monitor.metric_reduction()
@@ -127,7 +136,6 @@ def prepare_and_run(params):
         # we using leave one out validation, so batch_size should be 1
         val_dataloader = DataLoader(val_dataset, batch_size=1)
 
-
         train_monitor, validation_monitor = train(train_dataloader, val_dataloader, fold_num, params)
 
         cv_monitor.add_train_monitor(train_monitor).add_val_monitor(validation_monitor)
@@ -144,7 +152,7 @@ if __name__ == '__main__':
     arg('--lr', default=0.001, type=float)
     arg('--batch-size', default=8, type=int)
     arg('--epochs', default=10, type=int)
-    arg('--device', default='cuda', choices=['cuda', 'cpu'])
+    arg('--device', default='cuda:0', choices=['cuda', 'cpu'])
     arg('--layer-to-substitude', type=str, default='fc')
 
     args = parser.parse_args()

@@ -1,16 +1,17 @@
 import numpy as np
+from constants import num_to_class_vocab 
 import matplotlib as plt
 
-class MetricsMonitor:
-    def __init__(self, title):
+class MetricsMonitor: 
+    def __init__(self):
         self.epoch_losses = []
         self.epoch_metrics = []
         
         self.batch_losses = []
         self.batch_metrics = []
-        
-        self.title = title
 
+        self.examples = []
+        
     def add_loss(self, value):
         self.batch_losses.append(value)
 
@@ -24,6 +25,12 @@ class MetricsMonitor:
     def metric_reduction(self):
         self.epoch_metrics.append(np.mean(self.batch_metrics))
         self.batch_metrics = []
+
+    def add_prediction(self, img_path: str, cls: int, actual_cls: int):
+        true_value = num_to_class_vocab[actual_cls]
+        pred = num_to_class_vocab[cls]
+        self.examples.append((img_path, true_value, pred))
+
 
     def __dict__(self):
         return {
